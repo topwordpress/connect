@@ -1,0 +1,148 @@
+// LinkedIn Automation Script
+// Ensure to allow same-site scripting as discussed here: https://stackoverflow.com/a/50902950
+
+const Linkedin = {
+    config: {
+        scrollDelay: 3000,
+        actionDelay: 5000,
+        nextPageDelay: 5000,
+        maxRequests: -1, // Set to -1 for no limit
+        totalRequestsSent: 0,
+        addNote: true, // Set to false to skip note addition
+        note: "Hello {{name}}, I came across your profile while researching your field. Let's connect and explore potential collaboration opportunities. Excited to exchange insights with you!"
+    },
+    init: function (data, config) {
+        console.info("INFO: Script initialized.");
+        this.scrollBottom(data, config);
+    },
+    scrollBottom: function (data, config) {
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        setTimeout(() => this.scrollTop(data, config), config.scrollDelay);
+    },
+    scrollTop: function (data, config) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        setTimeout(() => this.inspect(data, config), config.scrollDelay);
+    },
+    inspect: function (data, config) {
+        const totalRows = this.totalRows();
+        console.debug(`DEBUG: Total search results found: ${totalRows}`);
+        totalRows >= 0 ? this.compile(data, config) : this.complete(config);
+    },
+    compile: function (data, config) {
+        data.pageButtons = [...document.querySelectorAll('button')]
+            .filter(element => element.textContent.trim() === "Connect");
+
+        if (data.pageButtons.length === 0) {
+            console.warn("ERROR: No connect buttons found!");
+            setTimeout(() => this.nextPage(config), config.nextPageDelay);
+        } else {
+            console.info(`INFO: Found ${data.pageButtons.length} connect buttons.`);
+            data.pageButtonIndex = 0;
+            data.connectNames = [...document.getElementsByClassName("entity-result__title-text")]
+                .filter(element => element.parentNode.parentNode.parentNode.parentNode.parentNode.parentNode.parentNode.parentNode.textContent.includes("Connect\n"))
+                .map(element => element.innerText.split(" ")[0]);
+            setTimeout(() => this.sendInvites(data, config), config.actionDelay);
+        }
+    },
+    sendInvites: function (data, config) {
+        if (config.maxRequests === 0) {
+            console.info("INFO: Maximum requests reached.");
+            return this.complete(config);
+        }
+
+        const button = data.pageButtons[data.pageButtonIndex];
+        button.click();
+        console.debug(`DEBUG: Sending invite to ${data.connectNames[data.pageButtonIndex]}`);
+
+        // Check for the popup after clicking the connect button
+        setTimeout(() => {
+            const premiumPopup = document.querySelector('.artdeco-modal__dismiss');
+            if (premiumPopup) {
+                console.warn("WARN: Premium popup detected. Sending request without a note.");
+                const sendWithoutNoteButton = [...document.querySelectorAll('button')]
+                    .find(el => el.getAttribute('aria-label') === 'Send without a note');
+
+                if (sendWithoutNoteButton) {
+                    sendWithoutNoteButton.click(); // Click the "Send without a note" button
+                    console.debug("DEBUG: Invite sent without a note.");
+                }
+
+                setTimeout(() => this.clickClose(data, config), config.actionDelay);
+            } else if (config.addNote && config.note) {
+                this.clickAddNote(data, config);
+            } else {
+                this.clickDone(data, config);
+            }
+        }, config.actionDelay);
+    },
+    clickAddNote: function (data, config) {
+        const addNoteButton = [...document.querySelectorAll('button')]
+            .find(el => el.textContent.trim() === 'Add a note');
+        if (addNoteButton) {
+            addNoteButton.click();
+            console.debug("DEBUG: Clicked 'Add a note'.");
+            setTimeout(() => this.pasteNote(data, config), config.actionDelay);
+        } else {
+            console.warn("WARN: 'Add a note' button not found, sending without note.");
+            setTimeout(() => this.clickDone(data, config), config.actionDelay);
+        }
+    },
+    pasteNote: function (data, config) {
+        const noteTextBox = document.getElementById("custom-message");
+        if (noteTextBox) {
+            noteTextBox.value = config.note.replace("{{name}}", data.connectNames[data.pageButtonIndex]);
+            noteTextBox.dispatchEvent(new Event('input', { bubbles: true }));
+            console.debug("DEBUG: Pasting note into the textbox.");
+            setTimeout(() => this.clickDone(data, config), config.actionDelay);
+        } else {
+            console.warn("WARN: Note textbox not found, moving to the send option.");
+            this.sendWithoutNote(data, config); // Attempt to send without note
+        }
+    },
+    clickDone: function (data, config) {
+        const doneButton = [...document.querySelectorAll('button')]
+            .find(el => el.textContent.trim() === 'Send');
+        
+        if (doneButton) {
+            doneButton.click();
+            console.debug("DEBUG: Invite sent.");
+        }
+        setTimeout(() => this.clickClose(data, config), config.actionDelay);
+    },
+    clickClose: function (data, config) {
+        const closeButton = document.querySelector('.artdeco-modal__dismiss');
+        if (closeButton) {
+            closeButton.click();
+        }
+        console.info(`INFO: Invite sent to ${data.pageButtonIndex + 1} out of ${data.pageButtons.length}`);
+        
+        config.maxRequests--;
+        config.totalRequestsSent++;
+
+        if (data.pageButtonIndex === data.pageButtons.length - 1) {
+            setTimeout(() => this.nextPage(config), config.actionDelay);
+        } else {
+            data.pageButtonIndex++;
+            setTimeout(() => this.sendInvites(data, config), config.actionDelay);
+        }
+    },
+    nextPage: function (config) {
+        const pagerButton = document.querySelector('.artdeco-pagination__button--next');
+        if (pagerButton && !pagerButton.hasAttribute('disabled')) {
+            pagerButton.click();
+            console.info("INFO: Navigating to the next page...");
+            setTimeout(() => this.init({}, config), config.nextPageDelay);
+        } else {
+            console.info("INFO: No next page button found!");
+            this.complete(config);
+        }
+    },
+    complete: function (config) {
+        console.info(`INFO: Script completed after sending ${config.totalRequestsSent} connection requests.`);
+    },
+    totalRows: function () {
+        return document.getElementsByClassName('search-result').length || 0;
+    }
+};
+
+Linkedin.init({}, Linkedin.config);
